@@ -22,6 +22,7 @@ export interface ViewportIssue {
     viewport: 'Desktop' | 'Tablet' | 'Mobile';
     horizontalScroll: boolean;
     overflowingElements: number;
+    smallTapTargets?: number;
 }
 
 export interface PageAnalysis {
@@ -195,8 +196,8 @@ async function analyzePage(page: Page, url: string): Promise<PageAnalysis> {
             const issues = await page.evaluate(() => {
                 const width = window.innerWidth;
                 // Check 1: Horizontal Scroll
-                // We use documentElement.scrollWidth > window.innerWidth (allow small buffer for scrollbars)
-                const horizontalScroll = document.documentElement.scrollWidth > width + 1;
+                // Increased buffer to 5px to avoid false positives from sub-pixel rendering
+                const horizontalScroll = document.documentElement.scrollWidth > width + 5;
 
                 // Check 2: Overflowing Elements
                 let overflowingElements = 0;
@@ -213,13 +214,33 @@ async function analyzePage(page: Page, url: string): Promise<PageAnalysis> {
                     if (rect.right > width && rect.left < width) overflowingElements++;
                 });
 
-                return { horizontalScroll, overflowingElements };
+                // Check 3: Small Tap Targets (Mobile Friendly)
+                let smallTapTargets = 0;
+                if (width < 768) { // Only check on mobile/tablet
+                    document.querySelectorAll('button, a, input[type="submit"]').forEach(el => {
+                        const rect = el.getBoundingClientRect();
+                        // Ignore hidden elements
+                        if (rect.width === 0 || rect.height === 0) return;
+
+                        // Google recommends 48x48, but 44x44 is also common standard
+                        if (rect.width < 44 || rect.height < 44) {
+                            // Check if it's just a text link (inline) vs a button
+                            const style = window.getComputedStyle(el);
+                            if (style.display !== 'inline' && style.padding !== '0px') {
+                                smallTapTargets++;
+                            }
+                        }
+                    });
+                }
+
+                return { horizontalScroll, overflowingElements, smallTapTargets };
             });
 
             viewportIssues.push({
                 viewport: vp.name,
                 horizontalScroll: issues.horizontalScroll,
-                overflowingElements: issues.overflowingElements
+                overflowingElements: issues.overflowingElements,
+                smallTapTargets: issues.smallTapTargets
             });
         }
 

@@ -32,6 +32,7 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
                 curr.visualIssues.viewportIssues.forEach(vp => {
                     if (vp.horizontalScroll) issues++;
                     if (vp.overflowingElements > 0) issues++;
+                    if (vp.smallTapTargets && vp.smallTapTargets > 0) issues++;
                 });
             }
         }
@@ -72,7 +73,8 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
             'Schema Types',
             'Question Headings',
             'Has Author',
-            'Has Date'
+            'Has Date',
+            'Small Tap Targets'
         ];
 
         const rows = results.map(r => {
@@ -80,6 +82,7 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
             const typos = r.contentIssues?.possibleTypos.join('; ') || '';
             const hasHorizontalScroll = r.visualIssues?.viewportIssues?.some(vp => vp.horizontalScroll) ? 'Yes' : 'No';
             const overflowingElements = r.visualIssues?.viewportIssues?.reduce((acc, vp) => acc + vp.overflowingElements, 0) || 0;
+            const smallTapTargets = r.visualIssues?.viewportIssues?.reduce((acc, vp) => acc + (vp.smallTapTargets || 0), 0) || 0;
             const schemaTypes = r.contentMetrics?.schemaTypes?.join(', ') || 'None';
 
             return [
@@ -111,7 +114,8 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
                 schemaTypes,
                 r.contentMetrics?.questionHeadings || 0,
                 r.contentMetrics?.eeatSignals?.hasAuthor ? 'Yes' : 'No',
-                r.contentMetrics?.eeatSignals?.hasDate ? 'Yes' : 'No'
+                r.contentMetrics?.eeatSignals?.hasDate ? 'Yes' : 'No',
+                smallTapTargets
             ];
         });
 
@@ -178,7 +182,7 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
                         const contentIssues = result.contentIssues || { possibleTypos: [] };
 
                         const hasUxIssues = uxIssues.missingAltTags > 0 || !uxIssues.hasViewport || uxIssues.h1Count !== 1;
-                        const hasViewportIssues = visualIssues.viewportIssues?.some(vp => vp.horizontalScroll || vp.overflowingElements > 0);
+                        const hasViewportIssues = visualIssues.viewportIssues?.some(vp => vp.horizontalScroll || vp.overflowingElements > 0 || (vp.smallTapTargets || 0) > 0);
                         const hasVisualIssues = visualIssues.imagesMissingDimensions > 0 || visualIssues.longWords > 0 || hasViewportIssues;
                         const hasContentIssues = contentIssues.possibleTypos.length > 0;
 
@@ -236,13 +240,14 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
                                                 {visualIssues.viewportIssues && visualIssues.viewportIssues.length > 0 && (
                                                     <div className="mt-2 space-y-2">
                                                         {visualIssues.viewportIssues.map((vp, i) => {
-                                                            if (!vp.horizontalScroll && vp.overflowingElements === 0) return null;
+                                                            if (!vp.horizontalScroll && vp.overflowingElements === 0 && (!vp.smallTapTargets || vp.smallTapTargets === 0)) return null;
                                                             return (
                                                                 <div key={i} className="text-xs bg-amber-500/10 border border-amber-500/20 p-2 rounded">
                                                                     <span className="font-semibold block text-amber-500">{vp.viewport} Issues:</span>
                                                                     <ul className="ml-2 mt-1 space-y-0.5 text-amber-400">
                                                                         {vp.horizontalScroll && <li>• Horizontal scroll detected</li>}
                                                                         {vp.overflowingElements > 0 && <li>• {vp.overflowingElements} elements overflowing</li>}
+                                                                        {vp.smallTapTargets && vp.smallTapTargets > 0 && <li>• {vp.smallTapTargets} small tap targets</li>}
                                                                     </ul>
                                                                 </div>
                                                             );
@@ -387,65 +392,17 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
                                                             )}
 
                                                             {/* Readability */}
-                                                            {result.contentMetrics.readabilityScore <= 60 && (
+                                                            {result.contentMetrics.readabilityScore < 60 && (
                                                                 <li className="text-xs flex gap-2.5 text-text-muted">
                                                                     <span className="text-amber-500 font-bold text-base leading-none">!</span>
                                                                     <span>
-                                                                        <strong className="block text-foreground mb-0.5">Simplify Language</strong>
-                                                                        Current readability is low ({result.contentMetrics.readabilityScore}/100). Aim for &gt; 60.
+                                                                        <strong className="block text-foreground mb-0.5">Simplify Content</strong>
+                                                                        Readability is low ({result.contentMetrics.readabilityScore}/100). Use shorter sentences and simpler words.
                                                                     </span>
                                                                 </li>
                                                             )}
                                                         </ul>
                                                     )}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Headings & Keywords */}
-                                        <div className="mt-8 pt-6 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-8">
-                                            {/* Headings Structure */}
-                                            <div>
-                                                <h5 className="text-xs font-bold text-text-muted uppercase tracking-wider mb-3">Heading Structure</h5>
-                                                {result.contentMetrics.headings.length > 0 ? (
-                                                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                                                        {result.contentMetrics.headings.map((h, i) => (
-                                                            <div key={i} className="text-xs truncate flex items-center" style={{ paddingLeft: `${(parseInt(h.tag[1]) - 1) * 12}px` }}>
-                                                                <span className="font-mono text-primary/50 mr-2 text-[10px]">{h.tag}</span>
-                                                                <span className="text-foreground">{h.text || <span className="italic text-text-muted">Empty</span>}</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <p className="text-xs text-text-muted italic">No headings found</p>
-                                                )}
-                                            </div>
-
-                                            {/* Keywords & Quality */}
-                                            <div className="space-y-6">
-                                                <div>
-                                                    <h5 className="text-xs font-bold text-text-muted uppercase tracking-wider mb-3">Top Keywords</h5>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {result.contentMetrics.keywords.map((k, i) => (
-                                                            <span key={i} className="px-2.5 py-1 bg-white/5 text-foreground border border-white/10 rounded-md text-xs">
-                                                                {k.word} <span className="text-primary ml-1 font-mono">{k.count}</span>
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                </div>
-
-                                                <div>
-                                                    <h5 className="text-xs font-bold text-text-muted uppercase tracking-wider mb-3">Content Quality</h5>
-                                                    <ul className="space-y-2 text-xs">
-                                                        {result.contentMetrics.contentQuality.longParagraphs > 0 ? (
-                                                            <li className="text-amber-500">• {result.contentMetrics.contentQuality.longParagraphs} paragraphs are too long (&gt;150 words)</li>
-                                                        ) : (
-                                                            <li className="text-primary">✓ Paragraph lengths look good</li>
-                                                        )}
-                                                        <li className="text-text-muted">
-                                                            • Text-to-Code Ratio: <span className="text-foreground font-mono">{(result.contentMetrics.contentQuality.textToCodeRatio * 100).toFixed(1)}%</span>
-                                                        </li>
-                                                    </ul>
                                                 </div>
                                             </div>
                                         </div>
