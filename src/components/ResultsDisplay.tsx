@@ -243,12 +243,44 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
                                                             if (!vp.horizontalScroll && vp.overflowingElements === 0 && (!vp.smallTapTargets || vp.smallTapTargets === 0)) return null;
                                                             return (
                                                                 <div key={i} className="text-xs bg-amber-500/10 border border-amber-500/20 p-2 rounded">
-                                                                    <span className="font-semibold block text-amber-500">{vp.viewport} Issues:</span>
+                                                                    <div className="flex justify-between items-start">
+                                                                        <span className="font-semibold block text-amber-500">{vp.viewport} Issues:</span>
+                                                                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                                                        {(vp as any).screenshotPath && (
+                                                                            <a
+                                                                                href={(vp as any).screenshotPath}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer"
+                                                                                className="text-[10px] underline text-primary hover:text-primary/80"
+                                                                            >
+                                                                                View Screenshot
+                                                                            </a>
+                                                                        )}
+                                                                    </div>
                                                                     <ul className="ml-2 mt-1 space-y-0.5 text-amber-400">
                                                                         {vp.horizontalScroll && <li>• Horizontal scroll detected</li>}
                                                                         {vp.overflowingElements > 0 && <li>• {vp.overflowingElements} elements overflowing</li>}
                                                                         {vp.smallTapTargets && vp.smallTapTargets > 0 && <li>• {vp.smallTapTargets} small tap targets</li>}
                                                                     </ul>
+                                                                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                                                    {(vp as any).offendingElements && (vp as any).offendingElements.length > 0 && (
+                                                                        <div className="mt-2 pl-2 border-l border-amber-500/20">
+                                                                            <span className="block text-[10px] uppercase text-amber-500/70 font-bold">Culprits:</span>
+                                                                            <ul className="space-y-0.5">
+                                                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                                                                {(vp as any).offendingElements.map((el: string, j: number) => (
+                                                                                    <li key={j} className="text-[10px] font-mono text-amber-300/80 truncate" title={el}>
+                                                                                        {el}
+                                                                                    </li>
+                                                                                ))}
+                                                                            </ul>
+                                                                        </div>
+                                                                    )}
+                                                                    {vp.horizontalScroll && (!((vp as any).offendingElements) || (vp as any).offendingElements.length === 0) && (
+                                                                        <div className="mt-1 pl-2 text-[10px] text-amber-500/60 italic">
+                                                                            Likely a general container width issue.
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             );
                                                         })}
@@ -308,6 +340,29 @@ export default function ResultsDisplay({ results }: ResultsDisplayProps) {
                                                     <p className={result.contentMetrics.hasSchema ? 'text-primary' : 'text-amber-500'}>
                                                         {result.contentMetrics.hasSchema ? '✓ Schema detected' : '⚠ No Schema detected'}
                                                     </p>
+                                                </div>
+
+                                                {/* Heading Structure */}
+                                                <div className="mt-6">
+                                                    <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Heading Structure</p>
+                                                    <div className="bg-black/40 rounded-lg p-3 border border-white/5 max-h-60 overflow-y-auto custom-scrollbar">
+                                                        {result.contentMetrics.headings.length > 0 ? (
+                                                            <ul className="space-y-1">
+                                                                {result.contentMetrics.headings.map((h, i) => (
+                                                                    <li key={i} className={`text-xs truncate ${h.tag === 'H1' ? 'text-primary font-bold' :
+                                                                        h.tag === 'H2' ? 'text-foreground pl-2' :
+                                                                            h.tag === 'H3' ? 'text-text-muted pl-4' :
+                                                                                'text-text-muted/60 pl-6'
+                                                                        }`}>
+                                                                        <span className="opacity-50 mr-1.5 text-[10px]">{h.tag}</span>
+                                                                        {h.text || <span className="italic opacity-50">Empty</span>}
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        ) : (
+                                                            <p className="text-xs text-text-muted italic">No headings found.</p>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
 

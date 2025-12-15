@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import puppeteer, { Browser, Page } from 'puppeteer';
 import nspell from 'nspell';
 
@@ -23,6 +25,8 @@ export interface ViewportIssue {
     horizontalScroll: boolean;
     overflowingElements: number;
     smallTapTargets?: number;
+    offendingElements?: string[];
+    screenshotPath?: string;
 }
 
 export interface PageAnalysis {
@@ -191,28 +195,84 @@ async function analyzePage(page: Page, url: string): Promise<PageAnalysis> {
         for (const vp of viewports) {
             await page.setViewport({ width: vp.width, height: vp.height });
             // Give a small buffer for layout to settle
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise(r => setTimeout(r, 500));
 
             const issues = await page.evaluate(() => {
                 const width = window.innerWidth;
                 // Check 1: Horizontal Scroll
-                // Increased buffer to 5px to avoid false positives from sub-pixel rendering
-                const horizontalScroll = document.documentElement.scrollWidth > width + 5;
+                // Increased buffer to 10px to avoid false positives from sub-pixel rendering and scrollbars
+                // Also check if scrollWidth is actually significantly larger than clientWidth
+                const docElement = document.documentElement;
+                const hasHorizontalScroll = (docElement.scrollWidth > width + 10) &&
+                    (docElement.scrollWidth > docElement.clientWidth + 10);
 
                 // Check 2: Overflowing Elements
-                let overflowingElements = 0;
+                const offendingElements: string[] = [];
+
+                // Helper to get element identifier
+                const getIdentifier = (el: Element) => {
+                    let id = el.tagName.toLowerCase();
+                    if (el.id) id += `#${el.id}`;
+                    if (el.className && typeof el.className === 'string') id += `.${el.className.split(' ').join('.')}`;
+                    return id.substring(0, 50); // Truncate if too long
+                };
+
+                // Helper to check if element is visible
+                const isVisible = (el: Element, style: CSSStyleDeclaration) => {
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                };
 
                 // Buttons/Inputs with text overflow
                 document.querySelectorAll('button, input[type="submit"], a[class*="btn"], a[class*="button"]').forEach(el => {
-                    if (el.scrollWidth > el.clientWidth) overflowingElements++;
+                    if (el.scrollWidth > el.clientWidth + 2) { // Small buffer
+                        const style = window.getComputedStyle(el);
+                        if (isVisible(el, style)) {
+                            offendingElements.push(getIdentifier(el));
+                        }
+                    }
                 });
 
                 // Images wider than viewport
                 document.querySelectorAll('img').forEach(el => {
                     const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
                     // Check if image sticks out of the viewport significantly
-                    if (rect.right > width && rect.left < width) overflowingElements++;
+                    if (rect.right > width + 5 && rect.left < width && isVisible(el, style)) {
+                        offendingElements.push(getIdentifier(el));
+                    }
                 });
+
+                // General elements that are just too wide (careful with this one)
+                // Only checking direct children of body or major wrappers to avoid noise
+                document.body.querySelectorAll('div, section, article, main, header, footer').forEach(el => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+
+                    // Filter out intentionally hidden stuff or full-width containers that match expectations
+                    if (rect.width > width + 10 && rect.left < 5 && isVisible(el, style)) {
+
+                        // Check if parent hides overflow
+                        const parent = el.parentElement;
+                        let parentHidesOverflow = false;
+                        if (parent) {
+                            const parentStyle = window.getComputedStyle(parent);
+                            if (parentStyle.overflowX === 'hidden' || parentStyle.overflow === 'hidden') {
+                                parentHidesOverflow = true;
+                            }
+                        }
+
+                        if (!parentHidesOverflow) {
+                            // Only report if it's SIGNIFICANTLY wider (more than scrollbar width usually)
+                            if (rect.width > width + 20) {
+                                offendingElements.push(getIdentifier(el));
+                            }
+                        }
+                    }
+                });
+
+                const unique = Array.from(new Set(offendingElements)).slice(0, 5);
 
                 // Check 3: Small Tap Targets (Mobile Friendly)
                 let smallTapTargets = 0;
@@ -226,21 +286,55 @@ async function analyzePage(page: Page, url: string): Promise<PageAnalysis> {
                         if (rect.width < 44 || rect.height < 44) {
                             // Check if it's just a text link (inline) vs a button
                             const style = window.getComputedStyle(el);
-                            if (style.display !== 'inline' && style.padding !== '0px') {
+
+                            // More robust inline check: if it wraps or is just text, it might be fine if it has padding
+                            // But strictly, 44x44 applies to the clickable area.
+                            // We heavily discount "inline" text links which often fail this but are acceptable in context
+                            if (style.display === 'inline' || (style.display === 'inline-block' && style.padding === '0px')) {
+                                // Skip pure text links for now to reduce noise
+                                return;
+                            }
+
+                            // If it looks like a button (bg color, border), it MUST be 44x44
+                            if (style.backgroundColor !== 'rgba(0, 0, 0, 0)' || style.borderWidth !== '0px') {
                                 smallTapTargets++;
                             }
                         }
                     });
                 }
 
-                return { horizontalScroll, overflowingElements, smallTapTargets };
+                return { horizontalScroll: hasHorizontalScroll, overflowingElements: unique.length, smallTapTargets, offendingElements: unique };
             });
+
+            // Capture screenshot if there are visual issues
+            let screenshotPath: string | undefined;
+            if (issues.horizontalScroll || issues.overflowingElements > 0) {
+                const timestamp = Date.now();
+                const safeUrl = url.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+                const filename = `issue_${safeUrl}_${vp.name}_${timestamp}.jpg`;
+                const publicDir = path.join(process.cwd(), 'public', 'screenshots');
+                const filepath = path.join(publicDir, filename);
+
+                // Ensure dir exists
+                try {
+                    if (!fs.existsSync(publicDir)) {
+                        fs.mkdirSync(publicDir, { recursive: true });
+                    }
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    await (page as any).screenshot({ path: filepath, type: 'jpeg', quality: 60, fullPage: false });
+                    screenshotPath = `/screenshots/${filename}`;
+                } catch (err) {
+                    console.error('Failed to save screenshot', err);
+                }
+            }
 
             viewportIssues.push({
                 viewport: vp.name,
                 horizontalScroll: issues.horizontalScroll,
                 overflowingElements: issues.overflowingElements,
-                smallTapTargets: issues.smallTapTargets
+                smallTapTargets: issues.smallTapTargets,
+                offendingElements: issues.offendingElements,
+                screenshotPath
             });
         }
 
@@ -452,7 +546,11 @@ export async function* crawlSite(startUrl: string, options: CrawlOptions = { max
             // Block images/css/fonts to speed up
             await page.setRequestInterception(true);
             page.on('request', (req) => {
-                if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
+                const resourceType = req.resourceType();
+                // We MUST load stylesheets and fonts for accurate visual analysis (layout shifts, correct sizing)
+                // We still block images/media to save some bandwidth, but we might need images for total accuracy later.
+                // For now, blocking images is a trade-off.
+                if (['image', 'media'].includes(resourceType)) {
                     req.abort();
                 } else {
                     req.continue();
